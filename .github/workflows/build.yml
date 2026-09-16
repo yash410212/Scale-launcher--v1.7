@@ -15,102 +15,59 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Extract v1.7 project
         shell: bash
         run: |
           set -euo pipefail
-          ZIP_FILE="scaleui_v1_7_final_release_candidate.zip"
-          test -f "$ZIP_FILE"
-          rm -rf workspace
-          mkdir workspace
-          unzip -q "$ZIP_FILE" -d workspace
+          unzip -q scaleui_v1_7_final_release_candidate.zip -d workspace
           test -f workspace/settings.gradle.kts
           test -d workspace/app
-
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
           cache: gradle
-
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0'
-
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
-
-      - name: Patch missing Compose imports
+      - name: Patch Compose source
         working-directory: workspace
-        shell: bash
         run: |
-          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
-          fixes = {
-              "AppDrawerScreen.kt": [
-                  "import androidx.compose.foundation.gestures.detectVerticalDragGestures",
-                  "import androidx.compose.foundation.layout.Box",
-                  "import androidx.compose.foundation.layout.size",
-                  "import androidx.compose.ui.input.pointer.pointerInput",
-              ],
-              "DrawerIcon.kt": [
-                  "import androidx.compose.ui.draw.scale",
-              ],
-              "DrawerSearchBar.kt": [
-                  "import androidx.compose.ui.draw.clip",
-              ],
-              "PreSetupHomeScreen.kt": [
-                  "import androidx.compose.foundation.layout.weight",
-              ],
-              "SettingsScreen.kt": [
-                  "import androidx.compose.material3.Icon",
-                  "import androidx.compose.material.icons.filled.Check",
-              ],
-              "GlassSurface.kt": [
-                  "import androidx.compose.ui.graphics.drawscope.Stroke",
-                  "import androidx.compose.ui.graphics.drawscope.drawOutline",
-              ],
-              "ZeroScreenScreen.kt": [
-                  "import androidx.compose.foundation.layout.height",
-              ],
-          }
-
-          roots = list(Path('.').rglob('*.kt'))
-          for name, imports in fixes.items():
-              matches = [p for p in roots if p.name == name]
-              if not matches:
-                  raise SystemExit(f"Missing source file: {name}")
-              for p in matches:
-                  text = p.read_text(encoding='utf-8')
-                  lines = text.splitlines()
-                  existing = set(lines)
-                  needed = [x for x in imports if x not in existing]
-                  if not needed:
-                      continue
-                  pkg = next((i for i,l in enumerate(lines) if l.startswith('package ')), None)
-                  if pkg is None:
-                      raise SystemExit(f"No package declaration in {p}")
-                  lines[pkg+1:pkg+1] = [''] + needed
-                  p.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-                  print(f"Patched {p}: {len(needed)} imports")
+          def f(n):
+              return next(p for p in Path('.').rglob('*.kt') if p.name == n)
+          def add(p, s):
+              t=p.read_text()
+              if s not in t:
+                  a=t.splitlines(); i=next(i for i,x in enumerate(a) if x.startswith('package ')); a.insert(i+1,''); a.insert(i+2,s); p.write_text('\n'.join(a)+'\n')
+          def rem(p, s):
+              p.write_text('\n'.join(x for x in p.read_text().splitlines() if x.strip()!=s)+'\n')
+          add(f('DrawerSearchBar.kt'),'import androidx.compose.foundation.clickable')
+          rem(f('PreSetupHomeScreen.kt'),'import androidx.compose.foundation.layout.weight')
+          p=f('SettingsScreen.kt'); rem(p,'import androidx.compose.material.icons.filled.Check'); add(p,'import androidx.compose.material.icons.Icons')
+          p=f('GlassSurface.kt'); rem(p,'import androidx.compose.ui.graphics.drawscope.Stroke'); rem(p,'import androidx.compose.ui.graphics.drawscope.drawOutline'); add(p,'import androidx.compose.ui.graphics.Stroke')
+          # Compose version in this project does not expose drawOutline as an import. Draw the same rounded glass edge directly.
+          t=p.read_text()
+          t=t.replace('drawOutline(\n                            outline = outline,\n                            brush = refraction,\n                            style = Stroke(width = 1.35.dp.toPx()),\n                        )','drawRoundRect(brush = refraction, size = size, cornerRadius = CornerRadius(LocalGlassConfig.current.cornerRadius.toPx()), style = Stroke(width = 1.35.dp.toPx()))')
+          t=t.replace('drawOutline(\n                            outline = outline,\n                            color = config.borderColor,\n                            style = Stroke(width = config.borderWidth.toPx()),\n                        )','drawRoundRect(color = config.borderColor, size = size, cornerRadius = CornerRadius(LocalGlassConfig.current.cornerRadius.toPx()), style = Stroke(width = config.borderWidth.toPx()))')
+          t=t.replace('drawOutline(\n                            outline = outline,\n                            brush = Brush.linearGradient(\n                                colors = listOf(\n                                    Color.White.copy(alpha = config.innerHighlightAlpha),\n                                    Color.Transparent,\n                                ),\n                                start = Offset.Zero,\n                                end = Offset(size.width, size.height),\n                            ),\n                            style = Stroke(width = 0.9.dp.toPx()),\n                        )','drawRoundRect(brush = Brush.linearGradient(colors = listOf(Color.White.copy(alpha = config.innerHighlightAlpha), Color.Transparent), start = Offset.Zero, end = Offset(size.width, size.height)), size = size, cornerRadius = CornerRadius(LocalGlassConfig.current.cornerRadius.toPx()), style = Stroke(width = 0.9.dp.toPx()))')
+          p.write_text(t)
+          add(p,'import androidx.compose.ui.geometry.CornerRadius')
+          t=p.read_text().replace('imageVector = Check','imageVector = Icons.Filled.Check')
+          p.write_text(t)
           PY
-
       - name: Build APK
         working-directory: workspace
-        shell: bash
         run: |
-          set -euo pipefail
           chmod +x gradlew
           ./gradlew clean assembleDebug --stacktrace --no-daemon
-
       - name: Sign and verify APK
         working-directory: workspace
-        shell: bash
         run: |
           set -euo pipefail
           APK=$(find . -type f -path '*/build/outputs/apk/debug/*.apk' -print -quit)
@@ -123,8 +80,6 @@ jobs:
           "$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android --ks-key-alias scaleui --out "$APK" "$ALIGNED"
           rm -f "$ALIGNED"
           "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
-          ls -lh "$APK"
-
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
