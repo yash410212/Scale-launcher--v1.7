@@ -36,30 +36,44 @@ jobs:
         run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
       - name: Patch Compose source
         working-directory: workspace
+        shell: bash
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          def f(n):
-              return next(p for p in Path('.').rglob('*.kt') if p.name == n)
-          def add(p, s):
-              t=p.read_text()
-              if s not in t:
-                  a=t.splitlines(); i=next(i for i,x in enumerate(a) if x.startswith('package ')); a.insert(i+1,''); a.insert(i+2,s); p.write_text('\n'.join(a)+'\n')
-          def rem(p, s):
-              p.write_text('\n'.join(x for x in p.read_text().splitlines() if x.strip()!=s)+'\n')
-          add(f('DrawerSearchBar.kt'),'import androidx.compose.foundation.clickable')
-          rem(f('PreSetupHomeScreen.kt'),'import androidx.compose.foundation.layout.weight')
-          p=f('SettingsScreen.kt'); rem(p,'import androidx.compose.material.icons.filled.Check'); add(p,'import androidx.compose.material.icons.Icons')
-          p=f('GlassSurface.kt'); rem(p,'import androidx.compose.ui.graphics.drawscope.Stroke'); rem(p,'import androidx.compose.ui.graphics.drawscope.drawOutline'); add(p,'import androidx.compose.ui.graphics.Stroke')
-          # Compose version in this project does not expose drawOutline as an import. Draw the same rounded glass edge directly.
-          t=p.read_text()
-          t=t.replace('drawOutline(\n                            outline = outline,\n                            brush = refraction,\n                            style = Stroke(width = 1.35.dp.toPx()),\n                        )','drawRoundRect(brush = refraction, size = size, cornerRadius = CornerRadius(LocalGlassConfig.current.cornerRadius.toPx()), style = Stroke(width = 1.35.dp.toPx()))')
-          t=t.replace('drawOutline(\n                            outline = outline,\n                            color = config.borderColor,\n                            style = Stroke(width = config.borderWidth.toPx()),\n                        )','drawRoundRect(color = config.borderColor, size = size, cornerRadius = CornerRadius(LocalGlassConfig.current.cornerRadius.toPx()), style = Stroke(width = config.borderWidth.toPx()))')
-          t=t.replace('drawOutline(\n                            outline = outline,\n                            brush = Brush.linearGradient(\n                                colors = listOf(\n                                    Color.White.copy(alpha = config.innerHighlightAlpha),\n                                    Color.Transparent,\n                                ),\n                                start = Offset.Zero,\n                                end = Offset(size.width, size.height),\n                            ),\n                            style = Stroke(width = 0.9.dp.toPx()),\n                        )','drawRoundRect(brush = Brush.linearGradient(colors = listOf(Color.White.copy(alpha = config.innerHighlightAlpha), Color.Transparent), start = Offset.Zero, end = Offset(size.width, size.height)), size = size, cornerRadius = CornerRadius(LocalGlassConfig.current.cornerRadius.toPx()), style = Stroke(width = 0.9.dp.toPx()))')
-          p.write_text(t)
-          add(p,'import androidx.compose.ui.geometry.CornerRadius')
-          t=p.read_text().replace('imageVector = Check','imageVector = Icons.Filled.Check')
-          p.write_text(t)
+
+          root = Path('.')
+
+          def add_import(rel, imp):
+              p = root / rel
+              text = p.read_text()
+              if imp not in text:
+                  lines = text.splitlines()
+                  pkg = next(i for i, line in enumerate(lines) if line.startswith('package '))
+                  lines.insert(pkg + 1, '')
+                  lines.insert(pkg + 2, imp)
+                  p.write_text('\n'.join(lines) + '\n')
+
+          def remove_import(rel, imp):
+              p = root / rel
+              lines = p.read_text().splitlines()
+              p.write_text('\n'.join(line for line in lines if line.strip() != imp) + '\n')
+
+          # Missing Compose imports reported by the previous compile.
+          add_import('app/src/main/java/com/scaleui/launcher/drawer/AppDrawerScreen.kt', 'import androidx.compose.ui.input.pointer.pointerInput')
+          add_import('app/src/main/java/com/scaleui/launcher/drawer/AppDrawerScreen.kt', 'import androidx.compose.foundation.layout.Box')
+          add_import('app/src/main/java/com/scaleui/launcher/drawer/AppDrawerScreen.kt', 'import androidx.compose.foundation.layout.size')
+          add_import('app/src/main/java/com/scaleui/launcher/drawer/DrawerIcon.kt', 'import androidx.compose.ui.draw.scale')
+          add_import('app/src/main/java/com/scaleui/launcher/drawer/DrawerSearchBar.kt', 'import androidx.compose.ui.draw.clip')
+          add_import('app/src/main/java/com/scaleui/launcher/home/PreSetupHomeScreen.kt', 'import androidx.compose.foundation.layout.weight')
+          add_import('app/src/main/java/com/scaleui/launcher/settings/SettingsScreen.kt', 'import androidx.compose.material3.Icon')
+          add_import('app/src/main/java/com/scaleui/launcher/settings/SettingsScreen.kt', 'import androidx.compose.material.icons.filled.Check')
+          add_import('app/src/main/java/com/scaleui/launcher/zeroscreen/ZeroScreenScreen.kt', 'import androidx.compose.foundation.layout.height')
+
+          # Stroke belongs to Compose's drawscope. Keep the original drawOutline
+          # implementation; do not call a @Composable CompositionLocal from draw scope.
+          remove_import('app/src/main/java/com/scaleui/launcher/theme/GlassSurface.kt', 'import androidx.compose.ui.graphics.Stroke')
+          add_import('app/src/main/java/com/scaleui/launcher/theme/GlassSurface.kt', 'import androidx.compose.ui.graphics.drawscope.Stroke')
           PY
       - name: Build APK
         working-directory: workspace
