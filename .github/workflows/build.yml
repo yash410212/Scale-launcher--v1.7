@@ -41,6 +41,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           root = Path('.')
 
@@ -59,21 +60,56 @@ jobs:
               lines = p.read_text().splitlines()
               p.write_text('\n'.join(line for line in lines if line.strip() != imp) + '\n')
 
-          # Missing Compose imports reported by the previous compile.
+          # App drawer/search imports.
           add_import('app/src/main/java/com/scaleui/launcher/drawer/AppDrawerScreen.kt', 'import androidx.compose.ui.input.pointer.pointerInput')
           add_import('app/src/main/java/com/scaleui/launcher/drawer/AppDrawerScreen.kt', 'import androidx.compose.foundation.layout.Box')
           add_import('app/src/main/java/com/scaleui/launcher/drawer/AppDrawerScreen.kt', 'import androidx.compose.foundation.layout.size')
           add_import('app/src/main/java/com/scaleui/launcher/drawer/DrawerIcon.kt', 'import androidx.compose.ui.draw.scale')
           add_import('app/src/main/java/com/scaleui/launcher/drawer/DrawerSearchBar.kt', 'import androidx.compose.ui.draw.clip')
-          add_import('app/src/main/java/com/scaleui/launcher/home/PreSetupHomeScreen.kt', 'import androidx.compose.foundation.layout.weight')
-          add_import('app/src/main/java/com/scaleui/launcher/settings/SettingsScreen.kt', 'import androidx.compose.material3.Icon')
-          add_import('app/src/main/java/com/scaleui/launcher/settings/SettingsScreen.kt', 'import androidx.compose.material.icons.filled.Check')
+          add_import('app/src/main/java/com/scaleui/launcher/drawer/DrawerSearchBar.kt', 'import androidx.compose.foundation.clickable')
           add_import('app/src/main/java/com/scaleui/launcher/zeroscreen/ZeroScreenScreen.kt', 'import androidx.compose.foundation.layout.height')
 
-          # Stroke belongs to Compose's drawscope. Keep the original drawOutline
-          # implementation; do not call a @Composable CompositionLocal from draw scope.
+          # PreviewInfoCard is a standalone composable, so it cannot use the
+          # RowScope-only weight modifier. Remove that weight while preserving size.
+          p = root / 'app/src/main/java/com/scaleui/launcher/home/PreSetupHomeScreen.kt'
+          t = p.read_text()
+          t = t.replace('Modifier.weight(1f).height(54.dp)', 'Modifier.height(54.dp)')
+          remove_import('app/src/main/java/com/scaleui/launcher/home/PreSetupHomeScreen.kt', 'import androidx.compose.foundation.layout.weight')
+          p.write_text(t)
+
+          # Selected-theme check icon: use the material icon through Icons.Filled.
+          p = root / 'app/src/main/java/com/scaleui/launcher/settings/SettingsScreen.kt'
+          add_import('app/src/main/java/com/scaleui/launcher/settings/SettingsScreen.kt', 'import androidx.compose.material.icons.Icons')
+          add_import('app/src/main/java/com/scaleui/launcher/settings/SettingsScreen.kt', 'import androidx.compose.material.icons.filled.Check')
+          p.write_text(p.read_text().replace('imageVector = Check', 'imageVector = Icons.Filled.Check'))
+
+          # GlassSurface: this Compose version does not expose drawOutline.
+          # Draw the same rounded glass borders directly, using the already
+          # captured composable config (not a CompositionLocal read in DrawScope).
+          p = root / 'app/src/main/java/com/scaleui/launcher/theme/GlassSurface.kt'
+          t = p.read_text()
           remove_import('app/src/main/java/com/scaleui/launcher/theme/GlassSurface.kt', 'import androidx.compose.ui.graphics.Stroke')
           add_import('app/src/main/java/com/scaleui/launcher/theme/GlassSurface.kt', 'import androidx.compose.ui.graphics.drawscope.Stroke')
+          add_import('app/src/main/java/com/scaleui/launcher/theme/GlassSurface.kt', 'import androidx.compose.ui.geometry.CornerRadius')
+
+          t = re.sub(
+              r'drawOutline\(\s*outline = outline,\s*brush = refraction,\s*style = Stroke\(width = 1\.35\.dp\.toPx\(\)\),\s*\)',
+              'drawRoundRect(brush = refraction, size = size, cornerRadius = CornerRadius(config.cornerRadius.toPx()), style = Stroke(width = 1.35.dp.toPx()))',
+              t,
+          )
+          t = re.sub(
+              r'drawOutline\(\s*outline = outline,\s*color = config\.borderColor,\s*style = Stroke\(width = config\.borderWidth\.toPx\(\)\),\s*\)',
+              'drawRoundRect(color = config.borderColor, size = size, cornerRadius = CornerRadius(config.cornerRadius.toPx()), style = Stroke(width = config.borderWidth.toPx()))',
+              t,
+          )
+          t = re.sub(
+              r'drawOutline\(\s*outline = outline,\s*brush = Brush\.linearGradient\(\s*colors = listOf\(\s*Color\.White\.copy\(alpha = config\.innerHighlightAlpha\),\s*Color\.Transparent,\s*\),\s*start = Offset\.Zero,\s*end = Offset\(size\.width, size\.height\),\s*\),\s*style = Stroke\(width = 0\.9\.dp\.toPx\(\)\),\s*\)',
+              'drawRoundRect(brush = Brush.linearGradient(colors = listOf(Color.White.copy(alpha = config.innerHighlightAlpha), Color.Transparent), start = Offset.Zero, end = Offset(size.width, size.height)), size = size, cornerRadius = CornerRadius(config.cornerRadius.toPx()), style = Stroke(width = 0.9.dp.toPx()))',
+              t,
+          )
+          # outline is no longer used after the replacements.
+          t = t.replace('                val outline = shape.createOutline(size, layoutDirection, this)\n', '')
+          p.write_text(t)
           PY
       - name: Build APK
         working-directory: workspace
