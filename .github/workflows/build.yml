@@ -43,6 +43,63 @@ jobs:
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
 
+      - name: Patch missing Compose imports
+        working-directory: workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          fixes = {
+              "AppDrawerScreen.kt": [
+                  "import androidx.compose.foundation.gestures.detectVerticalDragGestures",
+                  "import androidx.compose.foundation.layout.Box",
+                  "import androidx.compose.foundation.layout.size",
+                  "import androidx.compose.ui.input.pointer.pointerInput",
+              ],
+              "DrawerIcon.kt": [
+                  "import androidx.compose.ui.draw.scale",
+              ],
+              "DrawerSearchBar.kt": [
+                  "import androidx.compose.ui.draw.clip",
+              ],
+              "PreSetupHomeScreen.kt": [
+                  "import androidx.compose.foundation.layout.weight",
+              ],
+              "SettingsScreen.kt": [
+                  "import androidx.compose.material3.Icon",
+                  "import androidx.compose.material.icons.filled.Check",
+              ],
+              "GlassSurface.kt": [
+                  "import androidx.compose.ui.graphics.drawscope.Stroke",
+                  "import androidx.compose.ui.graphics.drawscope.drawOutline",
+              ],
+              "ZeroScreenScreen.kt": [
+                  "import androidx.compose.foundation.layout.height",
+              ],
+          }
+
+          roots = list(Path('.').rglob('*.kt'))
+          for name, imports in fixes.items():
+              matches = [p for p in roots if p.name == name]
+              if not matches:
+                  raise SystemExit(f"Missing source file: {name}")
+              for p in matches:
+                  text = p.read_text(encoding='utf-8')
+                  lines = text.splitlines()
+                  existing = set(lines)
+                  needed = [x for x in imports if x not in existing]
+                  if not needed:
+                      continue
+                  pkg = next((i for i,l in enumerate(lines) if l.startswith('package ')), None)
+                  if pkg is None:
+                      raise SystemExit(f"No package declaration in {p}")
+                  lines[pkg+1:pkg+1] = [''] + needed
+                  p.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+                  print(f"Patched {p}: {len(needed)} imports")
+          PY
+
       - name: Build APK
         working-directory: workspace
         shell: bash
